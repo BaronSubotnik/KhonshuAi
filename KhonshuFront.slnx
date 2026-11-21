@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../KhoshuProgramingSever/KhonshuProgramingAiShared/KhonshuProgramingAiShared.csproj" />
+  <Project Path="KhonshuFront.csproj" />
+</Solution>

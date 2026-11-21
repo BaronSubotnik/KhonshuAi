@@ -1,0 +1,37 @@
+﻿@inherits LayoutComponentBase
+
+<div class="page">
+
+    <header class="site-header">
+        <div class="site-header__inner">
+            <a class="brand" href="">Khonshu<span class="ai-prefix">Ai</span></a>
+
+            <nav class="site-nav">
+                <NavLink class="site-nav__link" href="" Match="NavLinkMatch.All">Главная</NavLink>
+                <NavLink class="site-nav__link" href="/chat">Попробовать <span>Khonshu</span></NavLink>
+            </nav>
+
+            <div class="site-actions">
+                <a class="btn-pill" href="/login">Войти</a>
+            </div>
+
+        </div>
+    </header>
+
+    <main class="site-main">
+        <article class="content">
+            @Body
+        </article>
+    </main>
+
+    <footer class="site-footer">
+        <span>© @DateTime.Now</span>
+    </footer>
+
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
