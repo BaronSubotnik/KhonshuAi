@@ -1,11 +1,20 @@
+using Khonshu.Constants;
+using Khonshu.ObamaGemini;
 using KhonshuFront.Auth;
 using KhonshuFront.Components;
+using KhonshuFront.General;
 using KhonshuFront.Interfaces;
 using KhonshuFront.Repositoryes;
 using KhonshuProgramingAiShared.Constatnt;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.Extensions.AI;
+
 
 var builder = WebApplication.CreateBuilder(args);
+
+String? openRouterApiKey = builder.Configuration["OpenRouterApiKey"]!;
+if(openRouterApiKey is null)
+    throw new ArgumentNullException(nameof(openRouterApiKey));
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -31,6 +40,22 @@ builder.Services.AddHttpClient<IPersonRepo, PersonRepository>(options => {
     options.BaseAddress = new Uri(SharedConstant.BaseApiUrl);
 });
 
+
+builder.Services.AddSingleton<InitialObamaAgentOptions>(options => new()
+{
+    AgentName = "Khonshu",
+    AiModel = CommonKhonshuConst.AiModels.Ernie55FlashPreview,
+    ApiKey =  openRouterApiKey,
+    ApiServerUrl = new Uri(CommonKhonshuConst.Endponit.OpenRouterForOpenAiBaseAddr),
+    SystemInstruction = GeneralConstant.AiSystemInstruction,
+    ReasoningEffort = ReasoningEffort.High,
+    Temperature = 0.3f
+});
+
+builder.Services.AddScoped<ObamaAgentII>(options =>  {
+    var optionsAi = options.GetRequiredService<InitialObamaAgentOptions>();
+    return new ObamaAgentII(optionsAi);
+});
 
 var app = builder.Build();
 

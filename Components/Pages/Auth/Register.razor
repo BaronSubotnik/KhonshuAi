@@ -1,7 +1,151 @@
 ﻿@page "/register"
+@inject IAuthRepo AuthRepo
+@inject IPersonRepo PersonRepo
+@inject JwtAuthState AuthState
+@inject NavigationManager Nav
 
-<h3>Register</h3>
+<section class="auth">
+    <div class="auth-card">
+        <h1 class="auth-title">Регистрация</h1>
+        <p class="auth-sub">Всё таки есть аккаунт? - <a href="/login">Войти</a></p>
+        <div class="auth-field">
+            <label for="login-username">Имя пользователя</label>
+            <input id="login-username" type="text" class="form-control"
+                   autocomplete="username" placeholder="MrJeffreyEpstein1109"
+                   @bind="username" @bind:event="oninput" />
+        </div>
+        
+        <div class="auth-field">
+            <label for="login-email">Email</label>
+            <input id="login-email" type="email" class="form-control"
+                   autocomplete="email" placeholder="Jeffrey@gmail.com"
+                   @bind="email" @bind:event="oninput" />
+        </div>
+
+        <div class="auth-field">
+            <label>Пароль</label>
+            <PasswordInput @bind-Value="enteredPassword" />
+            
+        </div>
+
+        <Button @ref="saveButton" Color="ButtonColor.Primary"
+                class="auth-submit" @onclick="OnSaveClick">Зарегистрироватся</Button>
+    </div>
+</section>
+
+<Toasts class="p-3" Messages="messages" AutoHide="true" StackLength="5" Placement="ToastsPlacement.TopRight" />
 
 @code {
+    private readonly List<ToastMessage> messages = [];
+    private String? enteredPassword = null;
+    private Button saveButton = null!;
     
+    private String? username = null!;
+    private String? email = null!;
+
+    private async Task OnSaveClick()
+    {
+        saveButton?.ShowLoading("Регистрация...");
+
+        if (!ValidationCorrectInputs() || !await ValidationNameAndEmailAsync())
+        {
+            saveButton?.HideLoading();
+            return;
+        }
+
+        var newUser = await AuthRepo.RegisterAsync(new()
+        {
+            Email = email!,
+            Password = enteredPassword!,
+            Username = username!,
+        });
+
+        if (newUser.Status != AuthStatus.Success)
+        {
+            ShowMessage(GetDangerMessage("Ошибка добавления", "Неизвестная ошибка добавления"));
+            return;
+        }
+        await AuthState.LoginAsync(newUser.User!.JwtToken!);
+        ShowMessage(GetSuccessMessage("Вы успешно зарегестрировались", "Успешно"));
+        await Task.Delay(1000);
+        Nav.NavigateTo("/");
+        
+        saveButton?.HideLoading();
+    }
+    
+    private Boolean ValidationCorrectInputs()
+    {
+        
+        if (String.IsNullOrEmpty(username))
+        {
+            ShowMessage(GetDangerMessage("Введите коректное имя", "Имя не заполнено"));
+            return false;
+        }
+
+        if (String.IsNullOrEmpty(email))
+        {
+            ShowMessage(GetDangerMessage("Введите коректный email","Email пуст"));
+            return false;
+        }
+        
+        if (String.IsNullOrEmpty(enteredPassword))
+        {
+            ShowMessage(GetDangerMessage("Введите коректный пароль", "Пароль пуст"));
+            return false;
+        }
+        
+            
+        return true;
+        
+    }
+    private async Task<Boolean> ValidationNameAndEmailAsync()
+    {
+        if (await PersonRepo.CheckExistPersonByNameAsync(username!))
+        {
+            ShowMessage(GetDangerMessage("Это имя уже занято, попробуйте другое", "Имя занято"));
+            return false;
+        }
+
+        if (await PersonRepo.CheckExistPersonByEmailAsync(email!))
+        {
+            ShowMessage(GetDangerMessage("Этот email адрес уже занят, попробуйте другой адрес", "Email занят"));
+            return false;
+        }
+        
+        return true;
+    }
+    
+    private void ShowMessage(ToastMessage message)
+    {
+        messages.Add(message);
+    }
+
+    private ToastMessage GetDangerMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Danger,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+    private ToastMessage GetSuccessMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Success,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+
+    private void SbrosCurrentUser()
+    {
+        enteredPassword = null;
+        username = null;
+    }
 }

@@ -1,0 +1,12 @@
+﻿@page "/profile"
+@inject JwtAuthState State
+
+<h3>Profile</h3>
+<Button Color="ButtonColor.Primary" Size="ButtonSize.Large" @onclick="LogOut"> Выйти </Button>
+
+@code {
+    private async Task LogOut()
+    {
+        await State.LogoutAsync();
+    }
+}

@@ -1,7 +1,148 @@
 ﻿@page "/login"
+@inject IAuthRepo AuthRepo
+@inject JwtAuthState AuthState
+@inject NavigationManager Nav
 
-<h3>Login</h3>
+<section class="auth">
+    <div class="auth-card">
+        <h1 class="auth-title">Вход</h1>
+        <p class="auth-sub">Нет аккаунта? <a href="/register">Регистрация</a></p>
+
+        <div class="auth-field">
+            <label for="login-username">Имя пользователя</label>
+            <input id="login-username" type="text" class="form-control"
+                   autocomplete="username" placeholder="MrBenjaminNetanyahu1488"
+                   @bind="username" @bind:event="oninput" />
+        </div>
+
+        <div class="auth-field">
+            <label>Пароль</label>
+            <PasswordInput @bind-Value="enteredPassword" />
+            
+        </div>
+
+        <Button @ref="saveButton" Color="ButtonColor.Primary"
+                class="auth-submit" @onclick="OnSaveClick">Войти</Button>
+    </div>
+</section>
+
+<Toasts class="p-3" Messages="messages" AutoHide="true" StackLength="5" Placement="ToastsPlacement.TopRight" />
 
 @code {
+    private readonly List<ToastMessage> messages = [];
+    private String? enteredPassword = null;
+    private Button saveButton = null!;
     
+    private String? username = null!;
+    
+
+    private async Task OnSaveClick()
+    {
+        saveButton?.ShowLoading("Вход...");
+        if (!ValidationCorrectInputs())
+        {
+            saveButton?.HideLoading();
+            SbrosCurrentUser();
+            return;
+        }
+            
+
+        var currentUser = await AuthRepo.LoginAsync(new LoginDto()
+        {
+            Username = username!,
+            Password = enteredPassword!
+        });
+
+        if (UserValidation(currentUser) is var loginUser && loginUser is null)
+        {
+            saveButton?.HideLoading();
+            SbrosCurrentUser();
+            return;
+        }
+            
+
+        await AuthState.LoginAsync(loginUser.JwtToken);
+        
+        Nav.NavigateTo("/", forceLoad: true);
+        
+        saveButton?.HideLoading();
+    }
+
+    private Boolean ValidationCorrectInputs()
+    {
+        if (String.IsNullOrEmpty(enteredPassword))
+        {
+            ShowMessage(GetDangerMessage("Введите коректный пароль", "Пароль пуст"));
+            return false;
+        }
+            
+
+        if (String.IsNullOrEmpty(username))
+        {
+            ShowMessage(GetDangerMessage("Введите коректное имя", "Имя не заполнено"));
+            return false;
+        }
+        
+            
+        return true;
+        
+    }
+    private RegisteredUserDto? UserValidation(AuthUserDto user)
+    {
+        switch (user.Status)
+        {
+            case AuthStatus.Success:
+                ShowMessage(GetSuccessMessage($"Привет, как там тебя, а вот {user.User?.Username!}", $"Успешно, {user.User?.Username!}"));
+                return user.User;
+                break;
+            case AuthStatus.NoUser:
+                ShowMessage(GetDangerMessage("Такого пользователя не существует", "Не зарегестрирован"));
+                return null;
+                break;
+            case AuthStatus.WrongPassword:
+                ShowMessage(GetDangerMessage("Введите правильный пароль", "Неверный пароль"));
+                return null;
+                break;
+            case AuthStatus.UnknownError:
+                ShowMessage(GetDangerMessage("Неизвестная ошибка", "Ошибка"));
+                return null;
+                break;
+            default:
+                return null;
+        }
+    }
+
+    private void ShowMessage(ToastMessage message)
+    {
+        messages.Add(message);
+    }
+
+    private ToastMessage GetDangerMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Danger,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+    private ToastMessage GetSuccessMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Success,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+
+    private void SbrosCurrentUser()
+    {
+        enteredPassword = null;
+        username = null;
+    }
 }

@@ -1,4 +1,5 @@
-﻿@inherits LayoutComponentBase
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@inherits LayoutComponentBase
 
 <div class="page">
 
@@ -10,23 +11,31 @@
                 <NavLink class="site-nav__link" href="" Match="NavLinkMatch.All">Главная</NavLink>
                 <NavLink class="site-nav__link" href="/chat">Попробовать <span>Khonshu</span></NavLink>
             </nav>
+            <AuthorizeView>
+                <Authorized>
+                    <div class="site-actions">
+                        <a class="btn-pill" href="/profile">@context.User.Identity?.Name</a>
+                    </div>
+                </Authorized>
+                <NotAuthorized>
+                    <div class="site-actions">
+                        <a class="btn-pill" href="/login">Войти</a>
+                    </div>
+                </NotAuthorized>
+            </AuthorizeView>
 
-            <div class="site-actions">
-                <a class="btn-pill" href="/login">Войти</a>
-            </div>
+
 
         </div>
     </header>
 
-    <main class="site-main">
+    <main>
         <article class="content">
             @Body
         </article>
     </main>
 
-    <footer class="site-footer">
-        <span>© @DateTime.Now</span>
-    </footer>
+
 
 </div>
 

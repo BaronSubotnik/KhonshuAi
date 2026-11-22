@@ -22,7 +22,9 @@ public sealed class JwtAuthState(ProtectedLocalStorage storage) : Authentication
         }
         catch
         {
+            Console.WriteLine("Первый рендер");
             return SetAnonimus();
+            
         }
 
 
@@ -50,7 +52,8 @@ public sealed class JwtAuthState(ProtectedLocalStorage storage) : Authentication
         UserId = idValue;
         UserName = name;
 
-        var indent = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, idStr), new Claim(ClaimTypes.Name, name)]);
+        var indent = new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, idStr), new Claim(ClaimTypes.Name, name)], "jwt");
+        Console.WriteLine($"id : {idStr}, name : {name}, jwt: {tokenProvider.Value}");
         return new AuthenticationState(new ClaimsPrincipal(indent));
     }
 

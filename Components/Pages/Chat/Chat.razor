@@ -1,8 +1,304 @@
 ﻿@page "/chat"
+@using Khonshu.ObamaGemini
+@using Khonshu.ObamaGemini.AiDto
+@using KhonshuFront.General
+@inject IChatRepo ChatRepo
+@inject ObamaAgentII ObamaAgent
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
+<AuthorizeView>
+    <Authorized>
+        <div class="chat-page">
+            <aside class="chat-sidebar @(sidebarOpen ? "open" : "")">
+                <button class="chat-new" @onclick="OpenNewChatModal">+ Новый чат</button>
+                <div class="chat-list">
+                    @foreach (var chat in userChats)
+                    {
+                        <button class="chat-item @(chat.ChatId == selectedChatId ? "active" : "")"
+                                @onclick="() => OpenChat(chat.ChatId)">@chat.Title</button>
+                    }
+                </div>
+            </aside>
 
-<h3>Chat</h3>
+            @if (sidebarOpen)
+            {
+                <div class="chat-backdrop" @onclick="ToggleSidebar"></div>
+            }
+
+            <section class="chat-main">
+                <div class="chat-topbar">
+                    <button class="chat-toggle" @onclick="ToggleSidebar" aria-label="Список чатов">☰</button>
+                    <span class="chat-topbar-title">@CurrentTitle</span>
+                </div>
+
+                <div class="chat-messages" @ref="messagesEl">
+                    @if (messagesInCurrentChat is null)
+                    {
+                        <div class="chat-empty">Выберите чат слева или создайте новый</div>
+                    }
+                    else
+                    {
+                        @foreach (var m in messagesInCurrentChat)
+                        {
+                            <div class="msg @(IsMine(m) ? "user" : "assistant")">
+                                <div class="msg-text">@m.MessageText</div>
+                            </div>
+                        }
+                        @if (isAiThinking)
+                        {
+                            <div class="msg assistant">
+                                <div class="msg-text thinking" aria-live="polite">
+                                    Думает<span class="dots"><span>.</span><span>.</span><span>.</span></span>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="chat-input">
+                    <div class="chat-input-box">
+                        <textarea rows="1" placeholder="Ваше сообщение..."
+                                  @bind="newMessageText" @bind:event="oninput"></textarea>
+                        <button class="chat-send" @onclick="SendMessage"
+                                disabled="@String.IsNullOrWhiteSpace(newMessageText)">↑</button>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+        <Modal @ref="newChatModal" Title="Новый чат" IsVerticallyCentered="true">
+            <BodyTemplate>
+                <input class="form-control" placeholder="Название чата" maxlength="100"
+                       @bind="newChatTitle" @bind:event="oninput" />
+            </BodyTemplate>
+            <FooterTemplate>
+                <Button Color="ButtonColor.Secondary" @onclick="CloseNewChatModal">Отмена</Button>
+                <Button Color="ButtonColor.Primary" @onclick="SaveNewChat"
+                        Disabled="@String.IsNullOrWhiteSpace(newChatTitle)">Сохранить</Button>
+            </FooterTemplate>
+        </Modal>
+    </Authorized>
+    <NotAuthorized>
+        <div class="chat-empty" style="padding:48px"><a href="/login">Войти</a></div>
+    </NotAuthorized>
+</AuthorizeView>
+
+<Toasts class="p-3" Messages="toastMessages" AutoHide="true" StackLength="5" Placement="ToastsPlacement.TopRight" />
 
 @code {
+    private List<ToastMessage> toastMessages = [];
     
+    [CascadingParameter] private Task<AuthenticationState> AuthTask { get; set; } = null!;
+    
+    private List<ChatDto> userChats = [];
+    private List<ViewMessageDto>? messagesInCurrentChat = null;
+    private Int32 selectedChatId = -1;
+    private String newMessageText = "";
+    private Boolean sidebarOpen;
+    private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+    private String CurrentTitle =>
+        userChats.FirstOrDefault(c => c.ChatId == selectedChatId)?.Title ?? "Новый чат";
+
+    private String? newChatTitle = null;
+    
+    private Modal newChatModal = null!;
+
+    private Boolean isAiThinking = false;
+    private Boolean needScroll = true;
+    
+    private ElementReference messagesEl;
+    private IJSObjectReference? jsModule;
+    
+    private readonly SemaphoreSlim aiLock = new(1,1);
+    
+    protected override async Task OnAfterRenderAsync(Boolean firstRender)
+    {
+        if (!needScroll) return;
+        needScroll = false;
+
+        jsModule ??= await JS.InvokeAsync<IJSObjectReference>(
+        "import", "./Components/Pages/Chat/Chat.razor.js");   
+        await jsModule.InvokeVoidAsync("scrollToBottom", messagesEl);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        var user = (await AuthTask).User;
+        if(user.Identity?.IsAuthenticated != true)
+            return;
+
+        userChats = await ChatRepo.GetAllChatsAsync();
+    }
+
+    private async Task OpenChat(Int32 chatId)
+    {
+        if(isAiThinking)
+            return;
+        if (selectedChatId != chatId)
+        {
+            selectedChatId = chatId;
+            var messages = await ChatRepo.GetAllMessagesInChatAsync(chatId);
+            messagesInCurrentChat = messages.Messages;
+            ObamaAgent.ClearHistory();
+            ObamaAgent.SetHistory(messages.Messages.AllocAsAgentAiMessageHistory());
+            await ScrollToBottomAsync();
+        }
+        
+    }
+
+    
+    private async Task SendMessage()
+    {
+        if (String.IsNullOrWhiteSpace(newMessageText)) return;
+        if (selectedChatId == -1)
+        {
+            ShowMessage(GetDangerMessage("Сначала выберите или создайте чат", "Нет чата"));
+            return;
+        }
+
+        var textMessage = newMessageText.Trim();
+        newMessageText = String.Empty;
+        
+        var sendedMessage = new NewMessageDto()
+        {
+            TextMessage = textMessage,
+            TargetChatId = selectedChatId,
+            Role = Role.User,
+            CreatedAt = DateTime.Now
+        };
+        
+        messagesInCurrentChat?.Add(sendedMessage.AsViewMessageDto());
+
+        await ScrollToBottomAsync();
+        
+        await SendMessagesAiAndApi(sendedMessage);
+
+    }
+
+    private async Task SendMessagesAiAndApi(NewMessageDto sendedMessage )
+    {
+        await aiLock.WaitAsync();
+    
+        try
+        {
+            isAiThinking = true;
+            StateHasChanged();
+            await ChatRepo.SendMessageAsync(sendedMessage);
+            
+            
+            String aiResponse = await ObamaAgent.UniversalSendMessageAsync(new AiRequest()
+            {
+                Prompt = sendedMessage.TextMessage,
+            });
+        
+            var aiSendedMessage = new NewMessageDto()
+            {
+                TextMessage = aiResponse,
+                TargetChatId = sendedMessage.TargetChatId,
+                Role = Role.Ai,
+                CreatedAt = DateTime.Now
+            };
+        
+            await ChatRepo.SendMessageAsync(aiSendedMessage);
+            messagesInCurrentChat?.Add(aiSendedMessage.AsViewMessageDto());
+            
+        }
+        catch (Exception e)
+        {
+            ShowMessage(GetDangerMessage(e.Message, "Неизвестная ошибка"));
+        }
+        finally
+        {
+            isAiThinking = false;
+            aiLock.Release();
+            await ScrollToBottomAsync();
+
+        }
+    }
+
+    private static Boolean IsMine(ViewMessageDto m) => m.Role == Role.User;
+    
+    private async Task OpenNewChatModal()
+    {
+        newChatTitle = "";
+        sidebarOpen = false;               
+        await newChatModal.ShowAsync();
+    }
+
+    private Task CloseNewChatModal() => newChatModal.HideAsync();
+
+    private async Task SaveNewChat()
+    {
+        var title = newChatTitle?.Trim();
+        if (title is null) return;
+
+        var newChat = await ChatRepo.CreateChatAsync(new CreateChatDto()
+        {
+            ChatTitle = title,
+        });
+        
+        if (newChat is null)
+        {
+            ShowMessage(GetDangerMessage("Неизвестная ошибка создания","Ошибка добавления чата"));
+            return;
+        }
+        userChats.Add(newChat);
+        StateHasChanged();
+
+        await newChatModal.HideAsync();
+    }
+    
+    private void ShowMessage(ToastMessage message)
+    {
+        toastMessages.Add(message);
+    }
+
+    private ToastMessage GetDangerMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Danger,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+    private ToastMessage GetSuccessMessage(String message, String title)
+    {
+        return new ToastMessage()
+        {
+            Title = title,
+            Type = ToastType.Success,
+            AutoHide = true,
+            HelpText = $"{DateTime.Now.ToShortTimeString()}",
+            Message = message
+        };
+    }
+    private async Task ScrollToBottomAsync()
+    {
+        StateHasChanged();     
+        await Task.Yield();   
+
+        try
+        {
+            jsModule ??= await JS.InvokeAsync<IJSObjectReference>(
+            "import", "./Components/Pages/Chat/Chat.razor.js");
+            await jsModule.InvokeVoidAsync("scrollToBottom", messagesEl);
+        }
+        catch (JSDisconnectedException) { }   
+    }
+    
+    
+    public async ValueTask DisposeAsync()
+    {
+        if (jsModule is null) return;
+        try { await jsModule.DisposeAsync(); }
+        catch (JSDisconnectedException) { }   
+    }}
+
+
+
 }

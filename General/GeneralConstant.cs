@@ -3,4 +3,5 @@
 public static class GeneralConstant
 {
     public const String JwtTokenStorageKey = "token";
+    public const String AiSystemInstruction = "";
 }
