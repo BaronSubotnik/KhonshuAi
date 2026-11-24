@@ -1,5 +1,6 @@
 using Khonshu.Constants;
 using Khonshu.ObamaGemini;
+using Khonshu.ObamaGemini.ObamaAgentTools;
 using KhonshuFront.Auth;
 using KhonshuFront.Components;
 using KhonshuFront.General;
@@ -12,9 +13,12 @@ using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
-String? openRouterApiKey = builder.Configuration["OpenRouterApiKey"]!;
-if(openRouterApiKey is null)
-    throw new ArgumentNullException(nameof(openRouterApiKey));
+String? apiKey = builder.Configuration["CloudFareApiKey"]!;
+String? exaSearchToolKey = builder.Configuration["ExaTools"]!;
+String? cloudFareAccauntId = builder.Configuration["CloudFareAccauntId"]!;
+
+if(apiKey is null ||  exaSearchToolKey is null || cloudFareAccauntId is null)
+    throw new ArgumentNullException(nameof(apiKey));
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -44,16 +48,25 @@ builder.Services.AddHttpClient<IPersonRepo, PersonRepository>(options => {
 builder.Services.AddSingleton<InitialObamaAgentOptions>(options => new()
 {
     AgentName = "Khonshu",
-    AiModel = CommonKhonshuConst.AiModels.Ernie55FlashPreview,
-    ApiKey =  openRouterApiKey,
-    ApiServerUrl = new Uri(CommonKhonshuConst.Endponit.OpenRouterForOpenAiBaseAddr),
+    AiModel = "@cf/openai/gpt-oss-120b",
+    ApiKey =  apiKey,
+    ApiServerUrl = new Uri(GeneralConstant.GetCloudFareEndpoint(cloudFareAccauntId)),
     SystemInstruction = GeneralConstant.AiSystemInstruction,
     ReasoningEffort = ReasoningEffort.High,
-    Temperature = 0.3f
+    Temperature = 0.3f,
+    RetryPolicy = 0,
+    IsWebSearch = true,
+    MaxOutputToken = Int32.MaxValue
+});
+
+builder.Services.AddHttpClient<ExaWebSearchTool>(options => {
+    options.BaseAddress = new Uri(ExaWebSearchTool.BaseApiUrl);
+    options.DefaultRequestHeaders.Add(ExaWebSearchTool.ApiKeyHeaders, exaSearchToolKey);
 });
 
 builder.Services.AddScoped<ObamaAgentII>(options =>  {
     var optionsAi = options.GetRequiredService<InitialObamaAgentOptions>();
+    var exaTools = options.GetRequiredService<ExaWebSearchTool>();
     return new ObamaAgentII(optionsAi);
 });
 
@@ -75,3 +88,6 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+// main: https://khonshu-ai.cloudpub.ru/
+// api: https://khonshu-api.cloudpub.ru/

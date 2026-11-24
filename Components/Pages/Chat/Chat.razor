@@ -7,6 +7,8 @@
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
+<PageTitle>Chats</PageTitle>
+
 <AuthorizeView>
     <Authorized>
         <div class="chat-page">
@@ -57,76 +59,99 @@
                 </div>
 
                 <div class="chat-input">
+                    <label class="chat-attach">
+                        <InputFile OnChange="OnFileChange" accept="image/jpeg,image/png" class="chat-file-input" />
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48" />
+                        </svg>
+                    </label>
+                    @if (!String.IsNullOrWhiteSpace(selectedImageFileName))
+                    {
+                        <span class="chat-file-name" title="@selectedImageFileName">@selectedImageFileName</span>
+                    }
                     <div class="chat-input-box">
-                        <textarea rows="1" placeholder="Ваше сообщение..."
+                        <textarea rows="1" placeholder="Ваше сообщение..." @onkeydown="Callback"
                                   @bind="newMessageText" @bind:event="oninput"></textarea>
-                        <button class="chat-send" @onclick="SendMessage"
-                                disabled="@String.IsNullOrWhiteSpace(newMessageText)">↑</button>
+                        <button class="chat-send" @onclick="SendMessage" @onkeydown="Callback"
+                                disabled="@(String.IsNullOrWhiteSpace(newMessageText) || isAiThinking)">↑</button>
                     </div>
                 </div>
             </section>
 
         </div>
-        <Modal @ref="newChatModal" Title="Новый чат" IsVerticallyCentered="true">
+        <Modal @ref="newChatModal"
+               Title="Новый чат"
+               IsVerticallyCentered="true"
+               Class="chat-new-modal"
+               HeaderCssClass="chat-new-modal-header"
+               BodyCssClass="chat-new-modal-body"
+               FooterCssClass="chat-new-modal-footer"
+               DialogCssClass="chat-new-modal">
             <BodyTemplate>
-                <input class="form-control" placeholder="Название чата" maxlength="100"
+                <input class="form-control chat-modal-input" placeholder="Название чата" maxlength="100"
                        @bind="newChatTitle" @bind:event="oninput" />
             </BodyTemplate>
             <FooterTemplate>
-                <Button Color="ButtonColor.Secondary" @onclick="CloseNewChatModal">Отмена</Button>
-                <Button Color="ButtonColor.Primary" @onclick="SaveNewChat"
-                        Disabled="@String.IsNullOrWhiteSpace(newChatTitle)">Сохранить</Button>
+                <button type="button" class="chat-modal-button chat-modal-button-secondary"
+                        @onclick="CloseNewChatModal">Отмена</button>
+                <button type="button" class="chat-modal-button chat-modal-button-primary"
+                        @onclick="SaveNewChat" disabled="@String.IsNullOrWhiteSpace(newChatTitle)">Сохранить</button>
             </FooterTemplate>
         </Modal>
     </Authorized>
     <NotAuthorized>
+        <div class="no-autohorized chat-empty">Вы не вошли в аккаунт!</div>
         <div class="chat-empty" style="padding:48px"><a href="/login">Войти</a></div>
     </NotAuthorized>
 </AuthorizeView>
 
 <Toasts class="p-3" Messages="toastMessages" AutoHide="true" StackLength="5" Placement="ToastsPlacement.TopRight" />
 
+
 @code {
     private List<ToastMessage> toastMessages = [];
-    
+
     [CascadingParameter] private Task<AuthenticationState> AuthTask { get; set; } = null!;
-    
+
     private List<ChatDto> userChats = [];
     private List<ViewMessageDto>? messagesInCurrentChat = null;
     private Int32 selectedChatId = -1;
     private String newMessageText = "";
     private Boolean sidebarOpen;
     private void ToggleSidebar() => sidebarOpen = !sidebarOpen;
+
     private String CurrentTitle =>
         userChats.FirstOrDefault(c => c.ChatId == selectedChatId)?.Title ?? "Новый чат";
 
     private String? newChatTitle = null;
-    
     private Modal newChatModal = null!;
 
     private Boolean isAiThinking = false;
-    private Boolean needScroll = true;
+    private Boolean isImageMessage = false;
+    private ReadOnlyMemory<Byte> imageBytes = default;
+    private String? selectedImageFileName;
+
     
+    private Boolean scrollRequested;
+
     private ElementReference messagesEl;
     private IJSObjectReference? jsModule;
-    
-    private readonly SemaphoreSlim aiLock = new(1,1);
-    
+
+    private readonly SemaphoreSlim aiLock = new(1, 1);
+
     protected override async Task OnAfterRenderAsync(Boolean firstRender)
     {
-        if (!needScroll) return;
-        needScroll = false;
-
-        jsModule ??= await JS.InvokeAsync<IJSObjectReference>(
-        "import", "./Components/Pages/Chat/Chat.razor.js");   
-        await jsModule.InvokeVoidAsync("scrollToBottom", messagesEl);
+        if (!scrollRequested) return;
+        scrollRequested = false;
+        await ScrollToBottomAsync();
     }
 
     protected override async Task OnInitializedAsync()
     {
         await base.OnInitializedAsync();
         var user = (await AuthTask).User;
-        if(user.Identity?.IsAuthenticated != true)
+        if (user.Identity?.IsAuthenticated != true)
             return;
 
         userChats = await ChatRepo.GetAllChatsAsync();
@@ -134,24 +159,24 @@
 
     private async Task OpenChat(Int32 chatId)
     {
-        if(isAiThinking)
-            return;
-        if (selectedChatId != chatId)
-        {
-            selectedChatId = chatId;
-            var messages = await ChatRepo.GetAllMessagesInChatAsync(chatId);
-            messagesInCurrentChat = messages.Messages;
-            ObamaAgent.ClearHistory();
-            ObamaAgent.SetHistory(messages.Messages.AllocAsAgentAiMessageHistory());
-            await ScrollToBottomAsync();
-        }
+        if (isAiThinking) return;
+        if (selectedChatId == chatId) return;
+
+        selectedChatId = chatId;
+        var messages = await ChatRepo.GetAllMessagesInChatAsync(chatId);
+        messagesInCurrentChat = messages.Messages;
+
+        await ObamaAgent.ForcedCreatingSessionAsync();
         
+        ObamaAgent.SetHistory(messages.Messages.AllocAsAgentAiMessageHistory());
+
+        scrollRequested = true;
     }
 
-    
     private async Task SendMessage()
     {
-        if (String.IsNullOrWhiteSpace(newMessageText)) return;
+        if (String.IsNullOrWhiteSpace(newMessageText) || isAiThinking) return;
+
         if (selectedChatId == -1)
         {
             ShowMessage(GetDangerMessage("Сначала выберите или создайте чат", "Нет чата"));
@@ -160,70 +185,90 @@
 
         var textMessage = newMessageText.Trim();
         newMessageText = String.Empty;
-        
-        var sendedMessage = new NewMessageDto()
+
+        var userMessage = new NewMessageDto
         {
             TextMessage = textMessage,
             TargetChatId = selectedChatId,
             Role = Role.User,
             CreatedAt = DateTime.Now
         };
-        
-        messagesInCurrentChat?.Add(sendedMessage.AsViewMessageDto());
 
-        await ScrollToBottomAsync();
-        
-        await SendMessagesAiAndApi(sendedMessage);
+       
+        var userView = userMessage.AsViewMessageDto();
+        messagesInCurrentChat?.Add(userView);
+        scrollRequested = true;
 
+        await SendMessagesAiAndApi(userMessage, userView);
     }
 
-    private async Task SendMessagesAiAndApi(NewMessageDto sendedMessage )
+    private async Task SendMessagesAiAndApi(NewMessageDto userMessage, ViewMessageDto userView)
     {
+
+        isAiThinking = true;
+        scrollRequested = true;
+
         await aiLock.WaitAsync();
-    
         try
         {
-            isAiThinking = true;
-            StateHasChanged();
-            await ChatRepo.SendMessageAsync(sendedMessage);
-            
-            
-            String aiResponse = await ObamaAgent.UniversalSendMessageAsync(new AiRequest()
+
+            try
             {
-                Prompt = sendedMessage.TextMessage,
-            });
-        
-            var aiSendedMessage = new NewMessageDto()
+                await ChatRepo.SendMessageAsync(userMessage);
+            }
+            catch (Exception e)
             {
-                TextMessage = aiResponse,
-                TargetChatId = sendedMessage.TargetChatId,
-                Role = Role.Ai,
-                CreatedAt = DateTime.Now
-            };
-        
-            await ChatRepo.SendMessageAsync(aiSendedMessage);
-            messagesInCurrentChat?.Add(aiSendedMessage.AsViewMessageDto());
+                messagesInCurrentChat?.Remove(userView);
+                ShowMessage(GetDangerMessage(e.Message, "Не удалось отправить сообщение"));
+                return;
+            }
+
             
-        }
-        catch (Exception e)
-        {
-            ShowMessage(GetDangerMessage(e.Message, "Неизвестная ошибка"));
+            try
+            {
+                // await Task.Delay(3000);
+                var request = new AiRequest
+                {
+                    Prompt = userMessage.TextMessage,
+                    ImageBytes = (isImageMessage && imageBytes.Length > 0) ? imageBytes : null,
+                };
+                Console.WriteLine(request.Prompt + "---------------------------------------------");
+                var aiResponse = await ObamaAgent.UniversalSendMessageAsync(request);
+                var aiMessage = new NewMessageDto
+                {
+                    TextMessage = aiResponse,
+                    TargetChatId = userMessage.TargetChatId,
+                    Role = Role.Ai,
+                    CreatedAt = DateTime.Now
+                };
+
+                await ChatRepo.SendMessageAsync(aiMessage);
+                messagesInCurrentChat?.Add(aiMessage.AsViewMessageDto());
+                scrollRequested = true;
+            }
+            catch (Exception e)
+            {
+                ShowMessage(GetDangerMessage(e.Message, "Ошибка ответа ИИ"));
+                Console.WriteLine(e.Message);
+            }
         }
         finally
         {
             isAiThinking = false;
+            scrollRequested = true;
+            imageBytes = default;
+            isImageMessage = false;
+            selectedImageFileName = null;
             aiLock.Release();
-            await ScrollToBottomAsync();
-
         }
     }
 
     private static Boolean IsMine(ViewMessageDto m) => m.Role == Role.User;
-    
+
     private async Task OpenNewChatModal()
     {
         newChatTitle = "";
-        sidebarOpen = false;               
+        sidebarOpen = false;
         await newChatModal.ShowAsync();
     }
 
@@ -232,32 +277,28 @@
     private async Task SaveNewChat()
     {
         var title = newChatTitle?.Trim();
-        if (title is null) return;
+        if (String.IsNullOrWhiteSpace(title)) return;
 
-        var newChat = await ChatRepo.CreateChatAsync(new CreateChatDto()
+        var newChat = await ChatRepo.CreateChatAsync(new CreateChatDto
         {
             ChatTitle = title,
         });
-        
+
         if (newChat is null)
         {
-            ShowMessage(GetDangerMessage("Неизвестная ошибка создания","Ошибка добавления чата"));
+            ShowMessage(GetDangerMessage("Неизвестная ошибка создания", "Ошибка добавления чата"));
             return;
         }
-        userChats.Add(newChat);
-        StateHasChanged();
 
+        userChats.Add(newChat);
         await newChatModal.HideAsync();
     }
-    
-    private void ShowMessage(ToastMessage message)
-    {
-        toastMessages.Add(message);
-    }
+
+    private void ShowMessage(ToastMessage message) => toastMessages.Add(message);
 
     private ToastMessage GetDangerMessage(String message, String title)
     {
-        return new ToastMessage()
+        return new ToastMessage
         {
             Title = title,
             Type = ToastType.Danger,
@@ -266,39 +307,59 @@
             Message = message
         };
     }
-    private ToastMessage GetSuccessMessage(String message, String title)
-    {
-        return new ToastMessage()
-        {
-            Title = title,
-            Type = ToastType.Success,
-            AutoHide = true,
-            HelpText = $"{DateTime.Now.ToShortTimeString()}",
-            Message = message
-        };
-    }
+
     private async Task ScrollToBottomAsync()
     {
-        StateHasChanged();     
-        await Task.Yield();   
-
         try
         {
             jsModule ??= await JS.InvokeAsync<IJSObjectReference>(
-            "import", "./Components/Pages/Chat/Chat.razor.js");
+                "import", "./Components/Pages/Chat/Chat.razor.js");
             await jsModule.InvokeVoidAsync("scrollToBottom", messagesEl);
         }
-        catch (JSDisconnectedException) { }   
+        catch (JSDisconnectedException) { }
     }
-    
-    
+
     public async ValueTask DisposeAsync()
     {
-        if (jsModule is null) return;
-        try { await jsModule.DisposeAsync(); }
-        catch (JSDisconnectedException) { }   
-    }}
+        try
+        {
+            if (jsModule is not null)
+                await jsModule.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
 
+        aiLock.Dispose();
+    }
+    private async Task OnFileChange(InputFileChangeEventArgs arg)
+    {
+        isImageMessage = true;
+        try
+        {
+            if (arg.File is null) return;
 
-
+            var resizedFile = await arg.File.RequestImageFileAsync("image/jpeg", 400, 400);
+            using var ms = new MemoryStream((Int32)resizedFile.Size);
+            await resizedFile.OpenReadStream(1024 * 1024 * 15).CopyToAsync(ms);
+            if (ms.TryGetBuffer(out var bytes))
+            {
+                imageBytes = bytes.AsMemory();
+                selectedImageFileName = arg.File.Name;
+            }
+        }
+        catch (Exception e)
+        {
+            ShowMessage(GetDangerMessage(e.Message, "Ошибка загрузки файла"));
+            isImageMessage = false;
+            selectedImageFileName = null;
+            imageBytes = default;
+            return;
+        }
+    }
+    private async Task Callback(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SendMessage();
+        }
+    }
 }

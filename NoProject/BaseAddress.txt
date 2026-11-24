@@ -1,0 +1,2 @@
+main:https://khonshu-ai.cloudpub.ru/
+api:https://khonshu-api.cloudpub.ru/
