@@ -232,7 +232,7 @@
                     Prompt = userMessage.TextMessage,
                     ImageBytes = (isImageMessage && imageBytes.Length > 0) ? imageBytes : null,
                 };
-                Console.WriteLine(request.Prompt + "---------------------------------------------");
+                // Console.WriteLine(request.Prompt + "---------------------------------------------");
                 var aiResponse = await ObamaAgent.UniversalSendMessageAsync(request);
                 var aiMessage = new NewMessageDto
                 {
